@@ -58,6 +58,10 @@ namespace DirectCompute
 		DecoderInputBuffers decoderInput;
 		DecoderResultBuffer decoderOutput;
 		const ModelBuffers& gpuModel;
+		// Whether to use the AMD "reshaped panels" matmul path. Cached from gpuInfo() at
+		// construction, and forced to false for block-quantized models — their weights are
+		// never reshaped into panels and are computed natively on the plain matmul path.
+		bool reshapedMatMul = false;
 #if BUILD_HYBRID_VERSION
 		std::unique_ptr<HybridContext> hybridContext;
 #endif

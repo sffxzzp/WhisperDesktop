@@ -135,6 +135,13 @@ Tensor MlContext::mulMatEx( const Tensor& a, const Tensor& b, const char* tagNam
 {
 	if( !canMulMat( a, b ) )
 		throw E_INVALIDARG;
+	// Block-quantized weights are never reshaped into panels; compute them via the plain
+	// (non-panel) path, which dispatches the native-dequant shader variants.
+	if( isQuantized( a.getType() ) )
+	{
+		profiler.setNextTag( tagName );
+		return mulMat( a, b );
+	}
 	if( 0 != a.nb[ 0 ] )
 		throw E_INVALIDARG;	// The first argument is expected to be pre-transposed
 	
