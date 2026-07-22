@@ -34,6 +34,8 @@ namespace Whisper
 		Breton = 0x7262,  // "br"
 		/// <summary>Bulgarian</summary>
 		Bulgarian = 0x6762,  // "bg"
+		/// <summary>Cantonese</summary>
+		Cantonese = 0x657579,  // "yue"
 		/// <summary>Catalan</summary>
 		Catalan = 0x6163,  // "ca"
 		/// <summary>Chinese</summary>

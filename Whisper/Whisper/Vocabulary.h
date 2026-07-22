@@ -32,12 +32,15 @@ namespace Whisper
 		id token_beg = 50363;
 
 		// available tasks
-		static const id token_translate = 50358;
-		static const id token_transcribe = 50359;
+		// Not static/const: large-v3 (n_vocab 51866) inserts one extra language token,
+		// which shifts these task tokens up by one. See Vocabulary::load().
+		id token_translate = 50358;
+		id token_transcribe = 50359;
 
 		bool is_multilingual() const
 		{
-			return n_vocab == 51865;
+			// 51865 = large-v1/v2 (99 languages), 51866 = large-v3 (100 languages, adds Cantonese)
+			return n_vocab == 51865 || n_vocab == 51866;
 		}
 
 		const char* string( int id ) const

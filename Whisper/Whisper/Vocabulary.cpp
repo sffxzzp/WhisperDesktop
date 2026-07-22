@@ -109,12 +109,18 @@ HRESULT Vocabulary::load( ComLight::iReadStream* stm, int lengthInHeader )
 
 	if( is_multilingual() )
 	{
+		// extra = 0 for v1/v2 (51865), 1 for large-v3 (51866). v3 adds one language token
+		// (Cantonese) inside the language block, shifting every token after it up by one.
+		// token_eot / token_sot precede the language block, so they only get the multilingual +1.
+		const int extra = n_vocab - 51865;
 		token_eot++;
 		token_sot++;
-		token_prev++;
-		token_solm++;
-		token_not++;
-		token_beg++;
+		token_translate += extra;
+		token_transcribe += extra;
+		token_prev += 1 + extra;
+		token_solm += 1 + extra;
+		token_not += 1 + extra;
+		token_beg += 1 + extra;
 	};
 
 	if( countWords < lengthInHeader )
