@@ -13,7 +13,15 @@ static const uint THREADS_X = 32;
 static const uint THREADS_Y = 16;
 #endif
 
+#ifdef QUANT_TYPE
+#include "dequant.hlsli"
+// Block-quantized weight: raw R32_UINT view, dequantized inline per element.
+Buffer<uint> arg0: register( t0 );
+#define LOAD_A( idx ) dequantElement( arg0, arg0Size, ( idx ) )
+#else
 Buffer<float> arg0: register( t0 );
+#define LOAD_A( idx ) arg0[ idx ]
+#endif
 Buffer<float> arg1: register( t1 );
 RWBuffer<float> result: register( u0 );
 
@@ -82,7 +90,7 @@ void main( uint3 group: SV_GroupID, uint3 thread : SV_GroupThreadID )
 				const uint y = ( i * 4 + j ) * THREADS_Y + thread.y;
 				[branch]
 				if( y < height )
-					v0[ j ] = arg0[ rsi ];
+					v0[ j ] = LOAD_A( rsi );
 			}
 			// Multiply + accumulate
 			acc[ i ] = mad( v0, v1, acc[ i ] );
@@ -108,7 +116,7 @@ void main( uint3 group: SV_GroupID, uint3 thread : SV_GroupThreadID )
 				const uint y = ( i * 4 + j ) * THREADS_Y + thread.y;
 				[branch]
 				if( y < height )
-					v0[ j ] = arg0[ s0 ];
+					v0[ j ] = LOAD_A( s0 );
 			}
 			// Multiply + accumulate
 			acc[ i ] = mad( v0, v1, acc[ i ] );

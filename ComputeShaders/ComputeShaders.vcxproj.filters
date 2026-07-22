@@ -51,6 +51,10 @@
     <FxCompile Include="addRepeatEx.hlsl" />
     <FxCompile Include="softMaxLong.hlsl" />
     <FxCompile Include="dbgFindNaN.hlsl" />
+    <FxCompile Include="mulMatByRowTiledQ5.hlsl" />
+    <FxCompile Include="mulMatByRowTiledQ8.hlsl" />
+    <FxCompile Include="mulMatTiledQ5.hlsl" />
+    <FxCompile Include="mulMatTiledQ8.hlsl" />
   </ItemGroup>
   <ItemGroup>
     <None Include="componentwiseBinaryOp.hlsli" />
@@ -60,6 +64,7 @@
     <None Include="flashAttentionCommon.hlsli" />
     <None Include="repeatUtils.hlsli" />
     <None Include="groupReduce64.hlsli" />
+    <None Include="dequant.hlsli" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="Readme.txt" />

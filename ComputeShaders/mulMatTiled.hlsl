@@ -26,7 +26,15 @@ static const uint THREADS_Y = 8;
 
 #endif
 
+#ifdef QUANT_TYPE
+#include "dequant.hlsli"
+// Block-quantized weight: raw R32_UINT view, dequantized inline per element.
+Buffer<uint> arg0: register( t0 );
+#define LOAD_A( idx ) dequantElement( arg0, arg0Size, ( idx ) )
+#else
 Buffer<float> arg0: register( t0 );
+#define LOAD_A( idx ) arg0[ idx ]
+#endif
 Buffer<float> arg1: register( t1 );
 RWBuffer<float> result: register( u0 );
 
@@ -117,7 +125,7 @@ void loadTile0( uint rsi, const uint3 thread, const uint w, const uint h, const 
 		for( i = thread.y; i < h; i += THREADS_Y, rsi += arg0Strides.y * THREADS_Y )
 		{
 			if( thread.x < w )
-				tile0[ thread.x ][ i ] = arg0[ rsi + thread.x * arg0Strides.x ];
+				tile0[ thread.x ][ i ] = LOAD_A( rsi + thread.x * arg0Strides.x );
 			else
 				tile0[ thread.x ][ i ] = 0.0;
 		}
@@ -130,7 +138,7 @@ void loadTile0( uint rsi, const uint3 thread, const uint w, const uint h, const 
 
 		rsi += arg0Strides.x * thread.y;
 		for( i = thread.y; i < w; i += THREADS_Y, rsi += arg0Strides.x * THREADS_Y )
-			tile0[ i ][ thread.x ] = arg0[ rsi + thread.x * arg0Strides.y ];
+			tile0[ i ][ thread.x ] = LOAD_A( rsi + thread.x * arg0Strides.y );
 
 		if( i >= TILE_SIZE )
 			return;
