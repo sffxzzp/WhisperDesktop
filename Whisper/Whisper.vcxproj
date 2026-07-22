@@ -21,13 +21,13 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
@@ -182,6 +182,7 @@
     <ClCompile Include="Whisper\ModelImpl.cpp" />
     <ClCompile Include="Utils\parallelFor.cpp" />
     <ClCompile Include="Whisper\Spectrogram.cpp" />
+    <ClCompile Include="Whisper\ggmlQuants.cpp" />
     <ClCompile Include="Whisper\WhisperModel.cpp" />
     <ClCompile Include="Whisper\Vocabulary.cpp" />
     <ClCompile Include="Whisper\DecoderResultBuffer.cpp" />
@@ -302,6 +303,7 @@
     <ClInclude Include="Utils\parallelFor.h" />
     <ClInclude Include="Whisper\Spectrogram.h" />
     <ClInclude Include="Whisper\loaderUtils.h" />
+    <ClInclude Include="Whisper\ggmlQuants.h" />
     <ClInclude Include="Whisper\WhisperModel.h" />
     <ClInclude Include="Whisper\Vocabulary.h" />
     <ClInclude Include="Whisper\DecoderResultBuffer.h" />

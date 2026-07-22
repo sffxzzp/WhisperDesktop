@@ -90,6 +90,7 @@
     <ClCompile Include="ML\Device.cpp" />
     <ClCompile Include="Whisper\ModelBuffers.clone.cpp" />
     <ClCompile Include="Utils\MurmurHash3.cpp" />
+    <ClCompile Include="Whisper\ggmlQuants.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="source\ggml.h" />
@@ -202,6 +203,7 @@
     <ClInclude Include="ML\DbgNanTest.h" />
     <ClInclude Include="ML\Device.h" />
     <ClInclude Include="Utils\MurmurHash3.h" />
+    <ClInclude Include="Whisper\ggmlQuants.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="whisper.def" />
