@@ -9,6 +9,11 @@ namespace DirectCompute
 		FP16,
 		FP32,
 		U32,
+		// Block-quantized weight storage (native GPU dequant in the matmul shaders).
+		// MUST be appended after the originals: some code assumes FP16==0, FP32==1,
+		// and viewFormat() indexes a table by this value.
+		Q5_0,
+		Q8_0,
 	};
 
 	inline size_t elementSize( eDataType dt )
@@ -16,6 +21,12 @@ namespace DirectCompute
 		assert( dt == eDataType::FP16 || dt == eDataType::FP32 || dt == eDataType::U32 );
 
 		return ( dt == eDataType::FP16 ) ? 2 : 4;
+	}
+
+	// True for the block-quantized weight types, which have no single element size.
+	inline bool isQuantized( eDataType dt )
+	{
+		return dt == eDataType::Q5_0 || dt == eDataType::Q8_0;
 	}
 
 	DXGI_FORMAT viewFormat( eDataType dt );

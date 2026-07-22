@@ -11,6 +11,7 @@ Tensor::Tensor( const Tensor& that )
 	nb = that.nb;
 	srv = that.srv;
 	uav = that.uav;
+	m_quantType = that.m_quantType;
 #ifdef _DEBUG
 	dbgType = that.dbgType;
 #endif
@@ -22,6 +23,7 @@ Tensor::Tensor( Tensor&& that ) noexcept
 	nb = that.nb;
 	srv.Attach( that.srv.Detach() );
 	uav.Attach( that.uav.Detach() );
+	m_quantType = that.m_quantType;
 #ifdef _DEBUG
 	dbgType = that.dbgType;
 #endif
@@ -33,6 +35,7 @@ Tensor& Tensor::operator=( const Tensor& that )
 	nb = that.nb;
 	srv = that.srv;
 	uav = that.uav;
+	m_quantType = that.m_quantType;
 #ifdef _DEBUG
 	dbgType = that.dbgType;
 #endif
@@ -45,6 +48,7 @@ Tensor& Tensor::operator=( Tensor&& that ) noexcept
 	nb = that.nb;
 	srv.Attach( that.srv.Detach() );
 	uav.Attach( that.uav.Detach() );
+	m_quantType = that.m_quantType;
 #ifdef _DEBUG
 	dbgType = that.dbgType;
 #endif
@@ -154,6 +158,31 @@ HRESULT Tensor::createImmutable( eDataType type, const std::array<int, 4>& size,
 	return S_OK;
 }
 
+HRESULT Tensor::createImmutableQuantized( eDataType type, const std::array<int, 4>& size, const void* rsi, size_t totalBytes )
+{
+	if( !isQuantized( type ) )
+		return E_INVALIDARG;
+	if( totalBytes == 0 || 0 != ( totalBytes % 4 ) || totalBytes > INT_MAX )
+		return E_INVALIDARG;
+
+	CComPtr<ID3D11Buffer> buffer;
+	CHECK( createBuffer( eBufferUse::Immutable, totalBytes, &buffer, rsi, nullptr ) );
+	// Raw block bytes, viewed as an array of 32-bit words; shaders dequantize inline.
+	CHECK( TensorGpuViews::create( buffer, DXGI_FORMAT_R32_UINT, totalBytes / 4, false ) );
+
+	m_quantType = type;
+
+	__m128i v = _mm_loadu_si128( ( const __m128i* )size.data() );
+	_mm_storeu_si128( ( __m128i* )ne.data(), v );
+	setDenseStrides();
+#ifdef _DEBUG
+	dbgType.type = type;
+	dbgType.usage = eBufferUse::Immutable;
+	dbgType.hasInitialData = true;
+#endif
+	return S_OK;
+}
+
 HRESULT Tensor::create( eDataType type, std::initializer_list<uint32_t> sizeElements, eBufferUse usage, CComPtr<ID3D11Buffer>& buffer, const void* rsi, ID3D11Buffer** ppStagingBuffer, bool shared )
 {
 	TensorGpuViews::clear();
@@ -239,7 +268,9 @@ eDataType Tensor::getType() const
 	case DXGI_FORMAT_R16_FLOAT:
 		return eDataType::FP16;
 	case DXGI_FORMAT_R32_UINT:
-		return eDataType::U32;
+		// Ambiguous format: a plain index buffer (U32) or a block-quantized weight.
+		// m_quantType carries the distinction (FP32 sentinel means "not quantized").
+		return isQuantized( m_quantType ) ? m_quantType : eDataType::U32;
 	}
 	throw E_NOTIMPL;
 }
