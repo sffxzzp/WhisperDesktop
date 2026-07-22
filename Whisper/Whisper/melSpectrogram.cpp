@@ -315,7 +315,7 @@ float* SpectrogramContext::fftRecursion( float* temp, const float* const rsi, co
 	return temp;
 }
 
-void SpectrogramContext::fft( std::array<float, N_MEL>& rdi, const float* pcm, size_t length )
+void SpectrogramContext::fft( std::array<float, N_MEL_MAX>& rdi, const float* pcm, size_t length )
 {
 	assert( length > 0 );
 	length = std::min( length, (size_t)FFT_SIZE );
@@ -366,8 +366,9 @@ void SpectrogramContext::fft( std::array<float, N_MEL>& rdi, const float* pcm, s
 
 	constexpr size_t n_fft = 1 + ( FFT_SIZE / 2 );
 
-	// mel spectrogram
-	for( size_t j = 0; j < N_MEL; j++ )
+	// mel spectrogram — filters.n_mel rows (80 for older models, 128 for large-v3)
+	const size_t n_mel = filters.n_mel;
+	for( size_t j = 0; j < n_mel; j++ )
 	{
 		double sum = 0.0;
 		for( size_t k = 0; k < n_fft; k++ )
@@ -381,7 +382,7 @@ void SpectrogramContext::fft( std::array<float, N_MEL>& rdi, const float* pcm, s
 	/*
 	const float* ptr = rdi.data();
 	const float* const ptrEnd = ptr + rdi.size();
-	static_assert( 0 == N_MEL % 4 );
+	static_assert( 0 == N_MEL_MAX % 4 );
 	__m128 ax = _mm_loadu_ps( ptr );
 	for( ptr += 4; ptr < ptrEnd; ptr += 4 )
 		ax = _mm_max_ps( ax, _mm_loadu_ps( ptr ) );

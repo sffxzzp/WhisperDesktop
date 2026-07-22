@@ -28,7 +28,8 @@ namespace Whisper
 	public:
 		SpectrogramContext( const Filters& flt );
 
-		// First step of the MEL algorithm, and recursively compute the FFT
-		void fft( std::array<float, N_MEL>& rdi, const float* pcm, size_t length );
+		// First step of the MEL algorithm, and recursively compute the FFT.
+		// rdi is sized to N_MEL_MAX (capacity); only filters.n_mel entries are written.
+		void fft( std::array<float, N_MEL_MAX>& rdi, const float* pcm, size_t length );
 	};
 }

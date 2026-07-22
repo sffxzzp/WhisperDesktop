@@ -12,7 +12,8 @@ namespace Whisper
 	class Spectrogram: public iSpectrogram
 	{
 		uint32_t length = 0;
-		static constexpr uint32_t mel = N_MEL;
+		// Number of mel bins for this model (80, or 128 for large-v3). Set in pcmToMel from Filters::n_mel.
+		uint32_t mel = N_MEL_MAX;
 		std::vector<float> data;
 		std::vector<StereoSample> stereo;
 

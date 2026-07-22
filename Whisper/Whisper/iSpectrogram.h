@@ -10,7 +10,7 @@ namespace Whisper
 
 	__interface iSpectrogram
 	{
-		// Make a buffer with length * N_MEL floats, starting at the specified offset
+		// Make a buffer with length * n_mel floats, starting at the specified offset
 		// An implementation of this interface may visualize the spectrogram, making pieces on demand
 		HRESULT makeBuffer( size_t offset, size_t length, const float** buffer, size_t& stride );
 
@@ -36,7 +36,7 @@ namespace Whisper
 
 		const float* operator[]( size_t idx ) const
 		{
-			assert( idx < N_MEL );
+			assert( idx < N_MEL_MAX );
 			return pointer + idx * stride;
 		}
 

@@ -17,8 +17,11 @@ namespace Whisper
 	protected:
 		PcmReader reader;
 		std::deque<PcmMonoChunk> queuePcmMono;
-		using MelChunk = std::array<float, N_MEL>;
+		// MelChunk is sized to the max capacity; only nMel entries are meaningful.
+		using MelChunk = std::array<float, N_MEL_MAX>;
 		std::deque<MelChunk> queueMel;
+		// Number of mel bins for this model (80, or 128 for large-v3). Set in ctor from Filters::n_mel.
+		uint32_t nMel = N_MEL_MAX;
 		size_t streamStartOffset = 0;
 		std::vector<float> tempPcm;
 		std::vector<float> outputMel;

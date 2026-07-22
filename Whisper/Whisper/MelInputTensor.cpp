@@ -38,7 +38,8 @@ HRESULT MelInputTensor::create( Whisper::iSpectrogram& spectrogram, const sEncod
 		const size_t i1 = std::min( (size_t)encParams.mel_offset + 2 * encParams.n_ctx, n_len );
 
 		// Whisper::MelBufferRaii sourceBuffer{ spectrogram, i0, i1 - i0 };
-		constexpr DWORD n_mel = Whisper::N_MEL;
+		// Number of mel rows to copy = the model's mel-filterbank size (80, or 128 for large-v3)
+		const DWORD n_mel = (DWORD)encParams.n_mels;
 		const size_t rowBytes = ( i1 - i0 ) * 4;
 		/*
 		for( size_t j = 0; j < n_mel; j++ )

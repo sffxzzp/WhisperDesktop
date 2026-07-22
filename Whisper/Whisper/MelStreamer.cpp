@@ -5,6 +5,7 @@ using namespace Whisper;
 
 MelStreamer::MelStreamer( const Filters& filters, ProfileCollection& prof, const iAudioReader* iar ) :
 	reader( iar ),
+	nMel( filters.n_mel ),
 	melContext( filters ),
 	profiler( prof )
 { }
@@ -73,9 +74,9 @@ size_t MelStreamer::serializePcm( size_t startOffset )
 
 namespace
 {
-	__forceinline __m128 transpose4x80( __m128 vmax, const float* c0, const float* c1, const float* c2, const float* c3, float* rdi, size_t stride )
+	__forceinline __m128 transpose4xN( __m128 vmax, const float* c0, const float* c1, const float* c2, const float* c3, float* rdi, size_t stride, size_t melCount )
 	{
-		const float* const c0End = c0 + 80;
+		const float* const c0End = c0 + melCount;
 		for( ; c0 < c0End; c0 += 4, c1 += 4, c2 += 4, c3 += 4, rdi += stride * 4 )
 		{
 			__m128 r0 = _mm_loadu_ps( c0 );
@@ -98,9 +99,9 @@ namespace
 		return vmax;
 	}
 
-	__forceinline __m128 transpose80( __m128 vmax, const float* c0, float* rdi, size_t stride )
+	__forceinline __m128 transposeN( __m128 vmax, const float* c0, float* rdi, size_t stride, size_t melCount )
 	{
-		const float* const c0End = c0 + 80;
+		const float* const c0End = c0 + melCount;
 		for( ; c0 < c0End; c0 += 4, rdi += stride * 4 )
 		{
 			__m128 r0 = _mm_loadu_ps( c0 );
@@ -126,7 +127,7 @@ void MelStreamer::makeTransposedBuffer( size_t off, size_t len )
 {
 	// Resize the output
 	assert( len <= queueMel.size() );
-	outputMel.resize( len * N_MEL );	// N_MEL = 80
+	outputMel.resize( len * nMel );	// nMel = 80, or 128 for large-v3
 
 	// First pass, copy transposed MEL data, and compute the maximum
 	const size_t lengthAligned = ( len / 4 ) * 4;
@@ -136,15 +137,15 @@ void MelStreamer::makeTransposedBuffer( size_t off, size_t len )
 	size_t i;
 	for( i = 0; i < lengthAligned; i += 4, rdi += 4 )
 	{
-		vMax = transpose4x80( vMax,
+		vMax = transpose4xN( vMax,
 			queueMel[ i ].data(),
 			queueMel[ i + 1 ].data(),
 			queueMel[ i + 2 ].data(),
 			queueMel[ i + 3 ].data(),
-			rdi, len );
+			rdi, len, nMel );
 	}
 	for( ; i < len; i++, rdi++ )
-		vMax = transpose80( vMax, queueMel[ i ].data(), rdi, len );
+		vMax = transposeN( vMax, queueMel[ i ].data(), rdi, len, nMel );
 
 	// Second pass, clamping and normalization
 	float mmax;
@@ -220,7 +221,7 @@ HRESULT MelStreamerSimple::makeBuffer( size_t off, size_t len, const float** buf
 		{
 			assert( readerEof );
 			auto& arr = queueMel.emplace_back();
-			memset( arr.data(), 0, N_MEL * 4 );
+			memset( arr.data(), 0, nMel * 4 );
 		}
 	}
 
@@ -458,7 +459,7 @@ HRESULT MelStreamerThread::makeBuffer( size_t off, size_t len, const float** buf
 			while( queueMel.size() < len )
 			{
 				auto& arr = queueMel.emplace_back();
-				memset( arr.data(), 0, N_MEL * 4 );
+				memset( arr.data(), 0, nMel * 4 );
 			}
 		}
 
