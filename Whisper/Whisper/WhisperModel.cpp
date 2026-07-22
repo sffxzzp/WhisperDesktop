@@ -1,6 +1,8 @@
 #include "stdafx.h"
 #include "WhisperModel.h"
 #include "loaderUtils.h"
+#include "audioConstants.h"
+#include "ggmlQuants.h"
 #include "../D3D/createBuffer.h"
 #include <atlcoll.h>
 #include <atlstr.h>
@@ -39,6 +41,11 @@ namespace
 		// In the current version, CPU reads data for a next tensor, while in the meantime GPU reshapes a previously loaded tensor.
 		HRESULT postProcess( Reshaper& rs, eDataType dt )
 		{
+			// Block-quantized weights are computed natively via the plain (non-panel) matmul
+			// shaders; the panel reshape shuffles individual floats and would destroy the
+			// quant blocks, so it never applies to them.
+			if( isQuantized( dt ) )
+				return S_OK;
 			switch( postProcessing )
 			{
 			case ePostProcessing::None:
@@ -181,6 +188,87 @@ namespace
 	}
 
 	inline const char* cstr( const CStringA& s ) { return s; }
+
+	// token_embedding is used both as the decoder input-embedding gather (addRows) and as
+	// the output logits projection. To avoid needing a quantized addRows shader, we keep it
+	// as fp16 in VRAM even for quantized models (dequantized at load).
+	constexpr char c_tokenEmbeddingName[] = "decoder.token_embedding.weight";
+
+	// Reusable scratch buffers for streaming tensor payloads.
+	struct TensorLoadBuffers
+	{
+		std::vector<uint8_t> raw;		// raw on-disk bytes (f16/f32/quant blocks)
+		std::vector<uint8_t> repacked;	// SoA bytes for native-quant GPU upload
+		std::vector<uint16_t> fp16;		// dequantized fp16 (fallback / token_embedding)
+	};
+
+	// Reads one tensor's payload from the stream and creates the GPU tensor `dest`.
+	// dtOut receives the effective GPU data type (for the caller's postProcess step).
+	// preferNativeQuant=false forces a quantized tensor to be dequantized to fp16.
+	HRESULT loadTensorPayload( ComLight::iReadStream* stm, int ftype, const std::array<int, 4>& ne,
+		bool preferNativeQuant, DirectCompute::Tensor& dest, DirectCompute::eDataType& dtOut,
+		TensorLoadBuffers& buf, int64_t& cbVram )
+	{
+		using namespace DirectCompute;
+		const eGgmlType gt = (eGgmlType)ftype;
+		switch( gt )
+		{
+		case eGgmlType::f32:
+		case eGgmlType::f16:
+		case eGgmlType::q4_0:
+		case eGgmlType::q4_1:
+		case eGgmlType::q5_0:
+		case eGgmlType::q5_1:
+		case eGgmlType::q8_0:
+			break;
+		default:
+			logError( u8"Unsupported tensor ggml type %i in model file", ftype );
+			return E_INVALIDARG;
+		}
+
+		const size_t nElements = (size_t)(uint32_t)ne[ 0 ] * (uint32_t)ne[ 1 ] * (uint32_t)ne[ 2 ] * (uint32_t)ne[ 3 ];
+		const size_t rawBytes = ggmlTensorBytes( gt, nElements );
+		if( rawBytes > UINT_MAX )
+			return DISP_E_OVERFLOW;
+		try { buf.raw.resize( rawBytes ); }
+		catch( const std::bad_alloc& ) { return E_OUTOFMEMORY; }
+		CHECK( readBytes( stm, buf.raw.data(), rawBytes ) );
+
+		if( gt == eGgmlType::f32 )
+		{
+			dtOut = eDataType::FP32;
+			CHECK( dest.createImmutable( dtOut, ne, buf.raw.data() ) );
+			cbVram += (int64_t)rawBytes;
+		}
+		else if( gt == eGgmlType::f16 )
+		{
+			dtOut = eDataType::FP16;
+			CHECK( dest.createImmutable( dtOut, ne, buf.raw.data() ) );
+			cbVram += (int64_t)rawBytes;
+		}
+		else if( preferNativeQuant && ggmlHasNativeGpuQuant( gt ) )
+		{
+			dtOut = ( gt == eGgmlType::q5_0 ) ? eDataType::Q5_0 : eDataType::Q8_0;
+			const QuantGpuLayout layout = computeQuantGpuLayout( gt, nElements );
+			try { buf.repacked.resize( layout.totalBytes ); }
+			catch( const std::bad_alloc& ) { return E_OUTOFMEMORY; }
+			repackQuantToGpu( gt, buf.raw.data(), nElements, buf.repacked.data() );
+			CHECK( dest.createImmutableQuantized( dtOut, ne, buf.repacked.data(), layout.totalBytes ) );
+			cbVram += (int64_t)layout.totalBytes;
+		}
+		else
+		{
+			// Dequantize to fp16: token_embedding, or a quant type without a native GPU
+			// shader yet (q4_0 / q4_1 / q5_1).
+			dtOut = eDataType::FP16;
+			try { buf.fp16.resize( nElements ); }
+			catch( const std::bad_alloc& ) { return E_OUTOFMEMORY; }
+			dequantizeToFp16( gt, buf.raw.data(), buf.fp16.data(), nElements );
+			CHECK( dest.createImmutable( dtOut, ne, buf.fp16.data() ) );
+			cbVram += (int64_t)nElements * 2;
+		}
+		return S_OK;
+	}
 }
 
 class WhisperModel::CallbacksImpl : public CpuCompute::iLoaderProgressSink
@@ -261,7 +349,7 @@ HRESULT WhisperModel::loadGpu( ComLight::iReadStream* stm, CallbacksImpl& callba
 
 	DirectCompute::Reshaper reshape;
 
-	std::vector<uint8_t> bytesVector;
+	TensorLoadBuffers loadBuffers;
 	size_t countLoaded = 0;
 	CStringA name;
 	int64_t cb = 0;
@@ -297,33 +385,8 @@ HRESULT WhisperModel::loadGpu( ComLight::iReadStream* stm, CallbacksImpl& callba
 		}
 
 		DirectCompute::eDataType dt;
-		size_t cbElement;
-		if( header.ftype == 0 )
-		{
-			dt = DirectCompute::eDataType::FP32;
-			cbElement = 4;
-		}
-		else
-		{
-			dt = DirectCompute::eDataType::FP16;
-			cbElement = 2;
-		}
-
-		const size_t totalElts = (size_t)(uint32_t)ne[ 0 ] * (uint32_t)ne[ 1 ] * (uint32_t)ne[ 2 ];
-		if( totalElts * cbElement > UINT_MAX )
-			return DISP_E_OVERFLOW;
-
-		try
-		{
-			bytesVector.resize( cbElement * totalElts );
-		}
-		catch( const std::bad_alloc& )
-		{
-			return E_OUTOFMEMORY;
-		}
-		CHECK( readBytes( stm, bytesVector.data(), bytesVector.size() ) );
-		cb += bytesVector.size();
-		CHECK( p->m_value.dest->createImmutable( dt, ne, bytesVector.data() ) );
+		const bool preferNativeQuant = ( 0 != name.Compare( c_tokenEmbeddingName ) );
+		CHECK( loadTensorPayload( stm, header.ftype, ne, preferNativeQuant, *p->m_value.dest, dt, loadBuffers, cb ) );
 		CHECK( p->m_value.postProcess( reshape, dt ) );
 		countLoaded++;
 	}
@@ -347,7 +410,7 @@ HRESULT WhisperModel::loadHybrid( ComLight::iReadStream* stm, CallbacksImpl& cal
 	DirectCompute::Reshaper reshape;
 	CpuCompute::HybridLoader loader( shared->hybridTensors, parameters.n_text_layer );
 
-	std::vector<uint8_t> bytesVector;
+	TensorLoadBuffers loadBuffers;
 	size_t countLoaded = 0;
 	CStringA name;
 	int64_t cb = 0;
@@ -386,35 +449,10 @@ HRESULT WhisperModel::loadHybrid( ComLight::iReadStream* stm, CallbacksImpl& cal
 		}
 
 		DirectCompute::eDataType dt;
-		size_t cbElement;
-		if( header.ftype == 0 )
-		{
-			dt = DirectCompute::eDataType::FP32;
-			cbElement = 4;
-		}
-		else
-		{
-			dt = DirectCompute::eDataType::FP16;
-			cbElement = 2;
-		}
-
-		const size_t totalElts = (size_t)(uint32_t)ne[ 0 ] * (uint32_t)ne[ 1 ] * (uint32_t)ne[ 2 ];
-		if( totalElts * cbElement > UINT_MAX )
-			return DISP_E_OVERFLOW;
-
-		try
-		{
-			bytesVector.resize( cbElement * totalElts );
-		}
-		catch( const std::bad_alloc& )
-		{
-			return E_OUTOFMEMORY;
-		}
-		CHECK( readBytes( stm, bytesVector.data(), bytesVector.size() ) );
-		CHECK( p->m_value.dest->createImmutable( dt, ne, bytesVector.data() ) );
+		const bool preferNativeQuant = ( 0 != name.Compare( c_tokenEmbeddingName ) );
+		CHECK( loadTensorPayload( stm, header.ftype, ne, preferNativeQuant, *p->m_value.dest, dt, loadBuffers, cb ) );
 		CHECK( p->m_value.postProcess( reshape, dt ) );
 		countLoaded++;
-		cb += bytesVector.size();
 	}
 
 	if( countLoaded != map.GetCount() )
@@ -458,6 +496,20 @@ HRESULT WhisperModel::load( ComLight::iReadStream* stm, bool hybrid, const sLoad
 
 		shared->filters.n_mel = pmh.n_mel;
 		shared->filters.n_fft = pmh.n_fft;
+
+		// The CPU mel-spectrogram path sizes std::array buffers to N_MEL_MAX and copies
+		// exactly parameters.n_mels rows into the encoder input tensor. Guard both invariants.
+		if( pmh.n_mel > N_MEL_MAX )
+		{
+			logError( u8"Unsupported mel-filterbank size %u (max %u). Rebuild with a larger N_MEL_MAX.", pmh.n_mel, (uint32_t)N_MEL_MAX );
+			return E_INVALIDARG;
+		}
+		if( (int)pmh.n_mel != parameters.n_mels )
+		{
+			logError( u8"Model is inconsistent: MEL filter rows %u != hparams n_mels %i", pmh.n_mel, parameters.n_mels );
+			return E_INVALIDARG;
+		}
+
 		const size_t len = (size_t)pmh.n_mel * pmh.n_fft;
 		shared->filters.data.resize( len );
 		CHECK( readBytes( stm, shared->filters.data.data(), len * 4 ) );
