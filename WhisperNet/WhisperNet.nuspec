@@ -15,7 +15,7 @@
 		<tags>whisper, gpgpu, speech recognition</tags>
 		<repository type="git" url="https://github.com/Const-me/Whisper.git" />
 		<dependencies>
-			<group targetFramework="net10.0-windows">
+			<group targetFramework="net6.0">
 				<dependency id="ComLightInterop" version="1.3.7" />
 			</group>
 		</dependencies>
@@ -23,8 +23,8 @@
 	</metadata>
 	<files>
 		<!-- Managed DLL with XML documentation -->
-		<file src="bin/Release/WhisperNet.dll" target="lib/net10.0-windows/" />
-		<file src="bin/Release/WhisperNet.xml" target="lib/net10.0-windows/" />
+		<file src="bin/Release/WhisperNet.dll" target="lib/net6.0/" />
+		<file src="bin/Release/WhisperNet.xml" target="lib/net6.0/" />
 		<!-- The C++ DLL -->
 		<file src="../x64/Release/Whisper.dll" target="runtimes/win-x64/native/" />
 		<!-- Readme for the nuget package -->
