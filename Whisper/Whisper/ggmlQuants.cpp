@@ -18,6 +18,152 @@ namespace
 	{
 		return (uint16_t)_mm_extract_epi16( _mm_cvtps_ph( _mm_set_ss( f ), _MM_FROUND_TO_NEAREST_INT ), 0 );
 	}
+
+	// ---------------- K-quant super-block dequant (256 elements) ----------------
+	// Ported from ggml-quants.c (llama.cpp). Each function dequantizes ONE super-block
+	// of 256 fp32 values. `d`/`dmin`/`m` are fp16.
+
+	inline float f16( const uint8_t* p )
+	{
+		uint16_t h; memcpy( &h, p, 2 );
+		return _mm_cvtss_f32( _mm_cvtph_ps( _mm_cvtsi32_si128( (int)h ) ) );
+	}
+
+	// Unpack one of 8 (6-bit scale, 6-bit min) pairs from a 12-byte block (q4_K / q5_K).
+	inline void get_scale_min_k4( int j, const uint8_t* q, uint8_t& d, uint8_t& m )
+	{
+		if( j < 4 )
+		{
+			d = q[ j ] & 63;
+			m = q[ j + 4 ] & 63;
+		}
+		else
+		{
+			d = ( q[ j + 4 ] & 0xF ) | ( ( q[ j - 4 ] >> 6 ) << 4 );
+			m = ( q[ j + 4 ] >> 4 ) | ( ( q[ j ] >> 6 ) << 4 );
+		}
+	}
+
+	void dequant_q2_K( const uint8_t* src, float* y )	// 84 bytes
+	{
+		const float d = f16( src + 80 );
+		const float dmin = f16( src + 82 );
+		const uint8_t* sc = src;			// scales[16]
+		const uint8_t* q = src + 16;		// qs[64]
+		int is = 0;
+		for( int n = 0; n < 256; n += 128, q += 32 )
+		{
+			int shift = 0;
+			for( int j = 0; j < 4; j++, shift += 2 )
+			{
+				uint8_t s = sc[ is++ ];
+				float dl = d * ( s & 0xF ), ml = dmin * ( s >> 4 );
+				for( int l = 0; l < 16; l++ )
+					*y++ = dl * (float)( ( q[ l ] >> shift ) & 3 ) - ml;
+				s = sc[ is++ ];
+				dl = d * ( s & 0xF ); ml = dmin * ( s >> 4 );
+				for( int l = 0; l < 16; l++ )
+					*y++ = dl * (float)( ( q[ l + 16 ] >> shift ) & 3 ) - ml;
+			}
+		}
+	}
+
+	void dequant_q3_K( const uint8_t* src, float* y )	// 110 bytes
+	{
+		const float d = f16( src + 108 );
+		const uint8_t* hm = src;			// hmask[32]
+		const uint8_t* q = src + 32;		// qs[64]
+
+		uint32_t aux[ 4 ];
+		memcpy( aux, src + 96, 12 );		// scales[12]
+		const uint32_t tmp = aux[ 2 ];
+		aux[ 2 ] = ( ( aux[ 0 ] >> 4 ) & 0x0f0f0f0f ) | ( ( ( tmp >> 4 ) & 0x03030303 ) << 4 );
+		aux[ 3 ] = ( ( aux[ 1 ] >> 4 ) & 0x0f0f0f0f ) | ( ( ( tmp >> 6 ) & 0x03030303 ) << 4 );
+		aux[ 0 ] = ( aux[ 0 ] & 0x0f0f0f0f ) | ( ( ( tmp >> 0 ) & 0x03030303 ) << 4 );
+		aux[ 1 ] = ( aux[ 1 ] & 0x0f0f0f0f ) | ( ( ( tmp >> 2 ) & 0x03030303 ) << 4 );
+		const int8_t* scales = (const int8_t*)aux;	// 16 signed 6-bit (bias 32)
+
+		int is = 0; uint8_t m = 1;
+		for( int n = 0; n < 256; n += 128, q += 32 )
+		{
+			int shift = 0;
+			for( int j = 0; j < 4; j++, shift += 2, m <<= 1 )
+			{
+				float dl = d * ( scales[ is++ ] - 32 );
+				for( int l = 0; l < 16; l++ )
+					*y++ = dl * (float)( (int)( ( q[ l ] >> shift ) & 3 ) - ( ( hm[ l ] & m ) ? 0 : 4 ) );
+				dl = d * ( scales[ is++ ] - 32 );
+				for( int l = 0; l < 16; l++ )
+					*y++ = dl * (float)( (int)( ( q[ l + 16 ] >> shift ) & 3 ) - ( ( hm[ l + 16 ] & m ) ? 0 : 4 ) );
+			}
+		}
+	}
+
+	void dequant_q4_K( const uint8_t* src, float* y )	// 144 bytes
+	{
+		const float d = f16( src + 0 );
+		const float dmin = f16( src + 2 );
+		const uint8_t* scales = src + 4;	// [12]
+		const uint8_t* q = src + 16;		// qs[128]
+		int is = 0;
+		for( int j = 0; j < 256; j += 64, q += 32, is += 2 )
+		{
+			uint8_t sc, m;
+			get_scale_min_k4( is + 0, scales, sc, m );
+			const float d1 = d * sc, m1 = dmin * m;
+			get_scale_min_k4( is + 1, scales, sc, m );
+			const float d2 = d * sc, m2 = dmin * m;
+			for( int l = 0; l < 32; l++ )
+				*y++ = d1 * (float)( q[ l ] & 0xF ) - m1;
+			for( int l = 0; l < 32; l++ )
+				*y++ = d2 * (float)( q[ l ] >> 4 ) - m2;
+		}
+	}
+
+	void dequant_q5_K( const uint8_t* src, float* y )	// 176 bytes
+	{
+		const float d = f16( src + 0 );
+		const float dmin = f16( src + 2 );
+		const uint8_t* scales = src + 4;	// [12]
+		const uint8_t* qh = src + 16;		// [32]
+		const uint8_t* ql = src + 48;		// [128]
+		int is = 0; uint8_t u1 = 1, u2 = 2;
+		for( int j = 0; j < 256; j += 64, ql += 32, is += 2, u1 <<= 2, u2 <<= 2 )
+		{
+			uint8_t sc, m;
+			get_scale_min_k4( is + 0, scales, sc, m );
+			const float d1 = d * sc, m1 = dmin * m;
+			get_scale_min_k4( is + 1, scales, sc, m );
+			const float d2 = d * sc, m2 = dmin * m;
+			for( int l = 0; l < 32; l++ )
+				*y++ = d1 * (float)( ( ql[ l ] & 0xF ) + ( ( qh[ l ] & u1 ) ? 16 : 0 ) ) - m1;
+			for( int l = 0; l < 32; l++ )
+				*y++ = d2 * (float)( ( ql[ l ] >> 4 ) + ( ( qh[ l ] & u2 ) ? 16 : 0 ) ) - m2;
+		}
+	}
+
+	void dequant_q6_K( const uint8_t* src, float* y )	// 210 bytes
+	{
+		const float d = f16( src + 208 );
+		const uint8_t* ql = src;			// [128]
+		const uint8_t* qh = src + 128;		// [64]
+		const int8_t* sc = (const int8_t*)( src + 192 );	// scales[16], signed 8-bit
+		for( int n = 0; n < 256; n += 128, ql += 64, qh += 32, sc += 8, y += 128 )
+		{
+			for( int l = 0; l < 32; l++ )
+			{
+				const int is = l / 16;
+				const int q1 = (int)( (int8_t)( ( ( ql[ l + 0 ] & 0xF ) | ( ( ( qh[ l ] >> 0 ) & 3 ) << 4 ) ) ) ) - 32;
+				const int q2 = (int)( (int8_t)( ( ( ql[ l + 32 ] & 0xF ) | ( ( ( qh[ l ] >> 2 ) & 3 ) << 4 ) ) ) ) - 32;
+				const int q3 = (int)( (int8_t)( ( ( ql[ l + 0 ] >> 4 ) | ( ( ( qh[ l ] >> 4 ) & 3 ) << 4 ) ) ) ) - 32;
+				const int q4 = (int)( (int8_t)( ( ( ql[ l + 32 ] >> 4 ) | ( ( ( qh[ l ] >> 6 ) & 3 ) << 4 ) ) ) ) - 32;
+				y[ l + 0 ] = d * sc[ is + 0 ] * q1;
+				y[ l + 32 ] = d * sc[ is + 2 ] * q2;
+				y[ l + 64 ] = d * sc[ is + 4 ] * q3;
+				y[ l + 96 ] = d * sc[ is + 6 ] * q4;
+			}
+		}
+	}
 }
 
 namespace Whisper
@@ -29,8 +175,15 @@ namespace Whisper
 		case eGgmlType::f32:
 		case eGgmlType::f16:
 			return 1;
+		case eGgmlType::q2_K:
+		case eGgmlType::q3_K:
+		case eGgmlType::q4_K:
+		case eGgmlType::q5_K:
+		case eGgmlType::q6_K:
+		case eGgmlType::q8_K:
+			return 256;	// QK_K
 		default:
-			return QK;
+			return QK;	// 32
 		}
 	}
 
@@ -45,6 +198,12 @@ namespace Whisper
 		case eGgmlType::q5_0: return 2 + 4 + QK / 2;			// 22
 		case eGgmlType::q5_1: return 2 + 2 + 4 + QK / 2;		// 24
 		case eGgmlType::q8_0: return 2 + QK;				// 34
+		case eGgmlType::q2_K: return 84;
+		case eGgmlType::q3_K: return 110;
+		case eGgmlType::q4_K: return 144;
+		case eGgmlType::q5_K: return 176;
+		case eGgmlType::q6_K: return 210;
+		case eGgmlType::q8_K: return 292;
 		default: return 0;
 		}
 	}
@@ -56,7 +215,19 @@ namespace Whisper
 
 	bool ggmlHasNativeGpuQuant( eGgmlType t )
 	{
-		return t == eGgmlType::q5_0 || t == eGgmlType::q8_0;
+		// The simple per-32-block legacy types are computed natively on the GPU.
+		// K-quants (256-element super-blocks) are dequantized to fp16 at load time.
+		switch( t )
+		{
+		case eGgmlType::q4_0:
+		case eGgmlType::q4_1:
+		case eGgmlType::q5_0:
+		case eGgmlType::q5_1:
+		case eGgmlType::q8_0:
+			return true;
+		default:
+			return false;
+		}
 	}
 
 	size_t ggmlTensorBytes( eGgmlType t, size_t nElements )
@@ -86,6 +257,28 @@ namespace Whisper
 			}
 			for( ; i < k; i++ )
 				y[ i ] = halfToFloat( h[ i ] );
+			return;
+		}
+
+		// K-quants: 256-element super-blocks, dispatched to the per-type routines above.
+		if( ggmlBlockSize( t ) == 256 )
+		{
+			assert( 0 == ( k % 256 ) );
+			const size_t nsb = k / 256;
+			const uint8_t* rsi = (const uint8_t*)src;
+			const uint32_t sbBytes = ggmlTypeSize( t );
+			for( size_t i = 0; i < nsb; i++, rsi += sbBytes, y += 256 )
+			{
+				switch( t )
+				{
+				case eGgmlType::q2_K: dequant_q2_K( rsi, y ); break;
+				case eGgmlType::q3_K: dequant_q3_K( rsi, y ); break;
+				case eGgmlType::q4_K: dequant_q4_K( rsi, y ); break;
+				case eGgmlType::q5_K: dequant_q5_K( rsi, y ); break;
+				case eGgmlType::q6_K: dequant_q6_K( rsi, y ); break;
+				default: assert( false ); break;	// q8_K (intermediate) not supported
+				}
+			}
 			return;
 		}
 
@@ -232,24 +425,28 @@ namespace Whisper
 
 		QuantGpuLayout r;
 		r.nBlocks = (uint32_t)( nElements / QK );
+		const uint32_t sw = alignWords( r.nBlocks * 2 );	// fp16 scales, in 32-bit words
 		r.scalesWord = 0;
-		const uint32_t scalesWords = alignWords( r.nBlocks * 2 );	// fp16 scales
+		uint32_t cursor = sw;
 
-		if( t == eGgmlType::q8_0 )
+		// mins plane (q4_1 / q5_1): one fp16 per block, same count as scales.
+		if( t == eGgmlType::q4_1 || t == eGgmlType::q5_1 )
 		{
-			r.highWord = 0;										// unused
-			r.quantsWord = scalesWords;
-			const uint32_t qsWords = alignWords( r.nBlocks * QK );	// int8 x nElements
-			r.totalBytes = ( r.quantsWord + qsWords ) * 4;
+			r.minsWord = cursor;
+			cursor += sw;
 		}
-		else // q5_0
+		// qh plane (q5_0 / q5_1): one u32 per block.
+		if( t == eGgmlType::q5_0 || t == eGgmlType::q5_1 )
 		{
-			r.highWord = scalesWords;
-			const uint32_t qhWords = r.nBlocks;						// one u32 per block
-			r.quantsWord = r.highWord + qhWords;
-			const uint32_t nibWords = alignWords( r.nBlocks * ( QK / 2 ) );	// 16 bytes/block
-			r.totalBytes = ( r.quantsWord + nibWords ) * 4;
+			r.highWord = cursor;
+			cursor += r.nBlocks;
 		}
+		// quants: q8_0 = int8 x nElements; the 4-bit types = 16 nibble bytes/block.
+		r.quantsWord = cursor;
+		const uint32_t qWords = ( t == eGgmlType::q8_0 )
+			? alignWords( r.nBlocks * QK )
+			: alignWords( r.nBlocks * ( QK / 2 ) );
+		r.totalBytes = ( r.quantsWord + qWords ) * 4;
 		return r;
 	}
 
@@ -260,26 +457,33 @@ namespace Whisper
 		memset( dst, 0, layout.totalBytes );
 
 		uint16_t* const scales = (uint16_t*)( dst + layout.scalesWord * 4 );
-		uint8_t* const quants = dst + layout.quantsWord * 4;
+		uint16_t* const mins = (uint16_t*)( dst + layout.minsWord * 4 );
 		uint32_t* const high = (uint32_t*)( dst + layout.highWord * 4 );
+		uint8_t* const quants = dst + layout.quantsWord * 4;
 
 		const uint8_t* rsi = (const uint8_t*)src;
-		const uint32_t bytesPerBlock = ggmlTypeSize( t );
+		const uint32_t bpb = ggmlTypeSize( t );
 
-		for( uint32_t b = 0; b < layout.nBlocks; b++, rsi += bytesPerBlock )
+		for( uint32_t b = 0; b < layout.nBlocks; b++, rsi += bpb )
 		{
-			memcpy( &scales[ b ], rsi, 2 );	// fp16 d
+			// Every legacy block begins with the fp16 scale d.
+			memcpy( &scales[ b ], rsi, 2 );
+			const uint8_t* p = rsi + 2;
 
+			if( t == eGgmlType::q4_1 || t == eGgmlType::q5_1 )
+			{
+				memcpy( &mins[ b ], p, 2 );	// fp16 min m
+				p += 2;
+			}
+			if( t == eGgmlType::q5_0 || t == eGgmlType::q5_1 )
+			{
+				memcpy( &high[ b ], p, 4 );	// qh (u32)
+				p += 4;
+			}
 			if( t == eGgmlType::q8_0 )
-			{
-				// int8 qs[32] -> quants[b*32 .. ]
-				memcpy( quants + (size_t)b * QK, rsi + 2, QK );
-			}
-			else // q5_0
-			{
-				memcpy( &high[ b ], rsi + 2, 4 );			// qh (u32)
-				memcpy( quants + (size_t)b * ( QK / 2 ), rsi + 6, QK / 2 );	// 16 nibble bytes
-			}
+				memcpy( quants + (size_t)b * QK, p, QK );			// 32 int8
+			else
+				memcpy( quants + (size_t)b * ( QK / 2 ), p, QK / 2 );	// 16 nibble bytes
 		}
 	}
 }

@@ -3,6 +3,10 @@
 #include "loaderUtils.h"
 #include "audioConstants.h"
 #include "ggmlQuants.h"
+#include "ggufFile.h"
+#include <cmath>
+#include <algorithm>
+#include <cstdio>
 #include "../D3D/createBuffer.h"
 #include <atlcoll.h>
 #include <atlstr.h>
@@ -220,6 +224,11 @@ namespace
 		case eGgmlType::q5_0:
 		case eGgmlType::q5_1:
 		case eGgmlType::q8_0:
+		case eGgmlType::q2_K:	// K-quants: loaded via dequant-to-fp16 (no native GPU shader)
+		case eGgmlType::q3_K:
+		case eGgmlType::q4_K:
+		case eGgmlType::q5_K:
+		case eGgmlType::q6_K:
 			break;
 		default:
 			logError( u8"Unsupported tensor ggml type %i in model file", ftype );
@@ -248,7 +257,15 @@ namespace
 		}
 		else if( preferNativeQuant && ggmlHasNativeGpuQuant( gt ) )
 		{
-			dtOut = ( gt == eGgmlType::q5_0 ) ? eDataType::Q5_0 : eDataType::Q8_0;
+			switch( gt )
+			{
+			case eGgmlType::q5_0: dtOut = eDataType::Q5_0; break;
+			case eGgmlType::q8_0: dtOut = eDataType::Q8_0; break;
+			case eGgmlType::q4_0: dtOut = eDataType::Q4_0; break;
+			case eGgmlType::q4_1: dtOut = eDataType::Q4_1; break;
+			case eGgmlType::q5_1: dtOut = eDataType::Q5_1; break;
+			default: return E_UNEXPECTED;
+			}
 			const QuantGpuLayout layout = computeQuantGpuLayout( gt, nElements );
 			try { buf.repacked.resize( layout.totalBytes ); }
 			catch( const std::bad_alloc& ) { return E_OUTOFMEMORY; }
@@ -259,13 +276,124 @@ namespace
 		else
 		{
 			// Dequantize to fp16: token_embedding, or a quant type without a native GPU
-			// shader yet (q4_0 / q4_1 / q5_1).
+			// shader (the K-quants).
 			dtOut = eDataType::FP16;
 			try { buf.fp16.resize( nElements ); }
 			catch( const std::bad_alloc& ) { return E_OUTOFMEMORY; }
 			dequantizeToFp16( gt, buf.raw.data(), buf.fp16.data(), nElements );
 			CHECK( dest.createImmutable( dtOut, ne, buf.fp16.data() ) );
 			cbVram += (int64_t)nElements * 2;
+		}
+		return S_OK;
+	}
+
+	// ---- GGUF helpers ----
+
+	// Slaney mel scale (matches librosa / whisper's precomputed mel_filters).
+	inline double hzToMelSlaney( double hz )
+	{
+		constexpr double f_sp = 200.0 / 3.0;
+		constexpr double min_log_hz = 1000.0;
+		const double min_log_mel = min_log_hz / f_sp;			// 15
+		const double logstep = std::log( 6.4 ) / 27.0;
+		if( hz < min_log_hz )
+			return hz / f_sp;
+		return min_log_mel + std::log( hz / min_log_hz ) / logstep;
+	}
+	inline double melToHzSlaney( double mel )
+	{
+		constexpr double f_sp = 200.0 / 3.0;
+		constexpr double min_log_hz = 1000.0;
+		const double min_log_mel = min_log_hz / f_sp;
+		const double logstep = std::log( 6.4 ) / 27.0;
+		if( mel < min_log_mel )
+			return f_sp * mel;
+		return min_log_hz * std::exp( logstep * ( mel - min_log_mel ) );
+	}
+
+	// Reconstruct whisper's mel filter bank [n_mels x (1+FFT_SIZE/2)], row-major (mel-major),
+	// matching librosa.filters.mel(sr=16000, n_fft=400, n_mels). GGUF has no standard slot
+	// for the filters, so we compute the deterministic standard bank.
+	void computeWhisperMelFilters( int n_mels, std::vector<float>& out )
+	{
+		const int nBins = 1 + (int)FFT_SIZE / 2;			// 201
+		const double sr = (double)SAMPLE_RATE;
+		out.assign( (size_t)n_mels * nBins, 0.0f );
+
+		const double melMin = hzToMelSlaney( 0.0 );
+		const double melMax = hzToMelSlaney( sr / 2.0 );
+		std::vector<double> hz( n_mels + 2 );
+		for( int i = 0; i < n_mels + 2; i++ )
+		{
+			const double mel = melMin + ( melMax - melMin ) * i / ( n_mels + 1 );
+			hz[ i ] = melToHzSlaney( mel );
+		}
+		for( int m = 0; m < n_mels; m++ )
+		{
+			const double lo = hz[ m ], ctr = hz[ m + 1 ], hi = hz[ m + 2 ];
+			const double enorm = 2.0 / ( hi - lo );			// slaney normalization
+			for( int k = 0; k < nBins; k++ )
+			{
+				const double f = (double)k * sr / (double)FFT_SIZE;	// fft bin frequency
+				const double lower = ( f - lo ) / ( ctr - lo );
+				const double upper = ( hi - f ) / ( hi - ctr );
+				double w = std::min( lower, upper );
+				if( w < 0 ) w = 0;
+				out[ (size_t)m * nBins + k ] = (float)( w * enorm );
+			}
+		}
+	}
+
+	// Derive whisper hyperparameters from the GGUF tensor shapes (robust to any metadata
+	// convention), with optional metadata overrides. whisper always uses head_dim 64.
+	HRESULT inferGgufHparams( const GgufFile& gguf, Whisper::sModelParams& p )
+	{
+		const GgufTensor* tokEmb = gguf.findTensor( "decoder.token_embedding.weight" );
+		const GgufTensor* conv1 = gguf.findTensor( "encoder.conv1.weight" );
+		const GgufTensor* encPos = gguf.findTensor( "encoder.positional_embedding" );
+		const GgufTensor* decPos = gguf.findTensor( "decoder.positional_embedding" );
+		if( nullptr == tokEmb || nullptr == conv1 || nullptr == encPos || nullptr == decPos )
+		{
+			logError( u8"GGUF model is missing required whisper tensors (token_embedding / conv1 / positional_embedding)" );
+			return E_INVALIDARG;
+		}
+
+		p.n_text_state = (int)tokEmb->ne[ 0 ];
+		p.n_vocab = (int)tokEmb->ne[ 1 ];
+		p.n_mels = (int)conv1->ne[ 1 ];
+		p.n_audio_state = (int)encPos->ne[ 0 ];
+		p.n_audio_ctx = (int)encPos->ne[ 1 ];
+		p.n_text_ctx = (int)decPos->ne[ 1 ];
+
+		int encLayers = 0, decLayers = 0, idx = 0;
+		for( const GgufTensor& t : gguf.tensors )
+		{
+			if( 1 == sscanf_s( t.name.c_str(), "encoder.blocks.%d.", &idx ) )
+				encLayers = std::max( encLayers, idx + 1 );
+			else if( 1 == sscanf_s( t.name.c_str(), "decoder.blocks.%d.", &idx ) )
+				decLayers = std::max( decLayers, idx + 1 );
+		}
+		p.n_audio_layer = encLayers;
+		p.n_text_layer = decLayers;
+		p.n_audio_head = p.n_audio_state / 64;
+		p.n_text_head = p.n_text_state / 64;
+		p.f16 = 1;
+
+		// Optional metadata overrides (documented whisper.* keys), if present.
+		int64_t v;
+		if( gguf.getInt( "whisper.mel_bins", v ) ) p.n_mels = (int)v;
+		if( gguf.getInt( "whisper.vocab_size", v ) ) p.n_vocab = (int)v;
+
+		if( p.n_audio_layer <= 0 || p.n_text_layer <= 0 || p.n_audio_head <= 0 || p.n_text_head <= 0 ||
+			p.n_vocab <= 0 || p.n_text_state <= 0 || p.n_audio_state <= 0 )
+		{
+			logError( u8"GGUF model has implausible whisper dimensions" );
+			return E_INVALIDARG;
+		}
+		if( p.n_mels > N_MEL_MAX )
+		{
+			logError( u8"Unsupported mel-filterbank size %i (max %u)", p.n_mels, (uint32_t)N_MEL_MAX );
+			return E_INVALIDARG;
 		}
 		return S_OK;
 	}
@@ -469,15 +597,89 @@ HRESULT WhisperModel::loadHybrid( ComLight::iReadStream* stm, CallbacksImpl& cal
 }
 #endif
 
+HRESULT WhisperModel::loadGguf( ComLight::iReadStream* stm, CallbacksImpl& callbacks )
+{
+	GgufFile gguf;
+	CHECK( gguf.parse( stm, true ) );	// the 4-byte magic was already consumed by load()
+
+	// Hyperparameters — inferred from the tensor shapes (+ optional metadata overrides).
+	CHECK( inferGgufHparams( gguf, parameters ) );
+
+	// Vocabulary from the GGUF tokenizer metadata.
+	const std::vector<std::string>* toks = gguf.getStringArray( "tokenizer.ggml.tokens" );
+	if( nullptr == toks )
+	{
+		logError( u8"GGUF model has no 'tokenizer.ggml.tokens' metadata; cannot build vocabulary" );
+		return E_INVALIDARG;
+	}
+	CHECK( shared->vocab.loadFromTokens( *toks, parameters.n_vocab ) );
+
+	// Mel filter bank — GGUF has no standard slot, so compute the deterministic whisper bank.
+	shared->filters.n_mel = (uint32_t)parameters.n_mels;
+	shared->filters.n_fft = 1 + FFT_SIZE / 2;
+	computeWhisperMelFilters( parameters.n_mels, shared->filters.data );
+
+	// GPU tensors — reuse the legacy name map + per-tensor loader; read each from the
+	// GGUF data section by its offset.
+	CAtlMap<CStringA, PendingTensor> map;
+	populateTensorsMap( map, parameters.n_audio_layer, parameters.n_text_layer, tensors, false );
+
+	DirectCompute::Reshaper reshape;
+	TensorLoadBuffers loadBuffers;
+	size_t countLoaded = 0;
+	int64_t cb = 0;
+
+	for( const GgufTensor& gt : gguf.tensors )
+	{
+		CStringA name( gt.name.c_str() );
+		auto p = map.Lookup( name );
+		if( nullptr == p )
+			continue;	// not part of the whisper model (e.g. an embedded mel bank)
+
+		std::array<int, 4> ne = { (int)gt.ne[ 0 ], (int)gt.ne[ 1 ], (int)gt.ne[ 2 ], (int)gt.ne[ 3 ] };
+		if( !allPositive( ne ) )
+			return E_INVALIDARG;
+
+		CHECK( stm->seek( gguf.dataOffset + (int64_t)gt.offset, ComLight::eSeekOrigin::Begin ) );
+
+		DirectCompute::eDataType dt;
+		const bool preferNativeQuant = ( 0 != name.Compare( c_tokenEmbeddingName ) );
+		CHECK( loadTensorPayload( stm, gt.ggmlType, ne, preferNativeQuant, *p->m_value.dest, dt, loadBuffers, cb ) );
+		CHECK( p->m_value.postProcess( reshape, dt ) );
+		countLoaded++;
+		CHECK( callbacks.call( stm ) );
+	}
+
+	if( countLoaded != map.GetCount() )
+	{
+		logError( u8"GGUF model is missing tensors - expected %zu, got %zu", map.GetCount(), countLoaded );
+		return E_INVALIDARG;
+	}
+
+	constexpr double mulMb = 1.0 / ( 1 << 20 );
+	logDebug( u8"Loaded GGUF model: %zu GPU tensors, %g MB VRAM", countLoaded, mulMb * cb );
+	return S_OK;
+}
+
 HRESULT WhisperModel::load( ComLight::iReadStream* stm, bool hybrid, const sLoadModelCallbacks* callbacks )
 {
 	CpuProfiler cpuPerf;
 	CallbacksImpl cb;
 	CHECK( cb.initialize( stm, callbacks ) );
-	// verify magic
+	// verify magic — dispatch to the GGUF path if it's a GGUF container.
 	{
 		uint32_t magic;
 		CHECK( readStruct( stm, magic ) );
+		if( magic == GgufFile::magic )
+		{
+			shared = std::make_shared<ModelShared>();
+			DirectCompute::GpuProfilerSimple gpuProf;
+			CHECK( gpuProf.create() );
+			CHECK( loadGguf( stm, cb ) );
+			CHECK( gpuProf.time( loadTimeGpu ) );
+			loadTimeCpu = cpuPerf.elapsed();
+			return S_OK;
+		}
 		if( magic != 0x67676d6c )
 		{
 			logError( u8"Invalid model file, bad magic" );

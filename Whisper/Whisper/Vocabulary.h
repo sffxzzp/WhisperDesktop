@@ -15,12 +15,20 @@ namespace Whisper
 		void addExtra( int index, const char* format, int i );
 
 		void completeBuild();
+
+		// Shared tail of load(): derive special-token ids, label the extra tokens,
+		// then completeBuild(). countWords = number of real vocab strings present.
+		void finalizeSpecialTokens( int countWords, int lengthInHeader );
 	public:
 		Vocabulary();
 
 		int n_vocab = 51864;
 
 		HRESULT load( ComLight::iReadStream* stm, int lengthInHeader );
+
+		// Populate from an explicit token list (GGUF `tokenizer.ggml.tokens`).
+		// lengthInHeader = the model's vocab size (from token_embedding / metadata).
+		HRESULT loadFromTokens( const std::vector<std::string>& toks, int lengthInHeader );
 
 		using id = int;
 

@@ -188,6 +188,9 @@
     <FxCompile Include="mulMatByRowTiledEx.hlsl" />
     <FxCompile Include="mulMatByRowTiledQ5.hlsl" />
     <FxCompile Include="mulMatByRowTiledQ8.hlsl" />
+    <FxCompile Include="mulMatByRowTiledQ40.hlsl" />
+    <FxCompile Include="mulMatByRowTiledQ41.hlsl" />
+    <FxCompile Include="mulMatByRowTiledQ51.hlsl" />
     <FxCompile Include="mulMatByScalar.hlsl" />
     <FxCompile Include="mulMatDotMain.hlsl" />
     <FxCompile Include="mulMatDotReshape.hlsl" />
@@ -196,6 +199,9 @@
     <FxCompile Include="mulMatTiledEx.hlsl" />
     <FxCompile Include="mulMatTiledQ5.hlsl" />
     <FxCompile Include="mulMatTiledQ8.hlsl" />
+    <FxCompile Include="mulMatTiledQ40.hlsl" />
+    <FxCompile Include="mulMatTiledQ41.hlsl" />
+    <FxCompile Include="mulMatTiledQ51.hlsl" />
     <FxCompile Include="norm.hlsl" />
     <FxCompile Include="normCompat.hlsl" />
     <FxCompile Include="normFixed.hlsl" />

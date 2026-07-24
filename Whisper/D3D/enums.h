@@ -14,6 +14,9 @@ namespace DirectCompute
 		// and viewFormat() indexes a table by this value.
 		Q5_0,
 		Q8_0,
+		Q4_0,
+		Q4_1,
+		Q5_1,
 	};
 
 	inline size_t elementSize( eDataType dt )
@@ -26,7 +29,17 @@ namespace DirectCompute
 	// True for the block-quantized weight types, which have no single element size.
 	inline bool isQuantized( eDataType dt )
 	{
-		return dt == eDataType::Q5_0 || dt == eDataType::Q8_0;
+		switch( dt )
+		{
+		case eDataType::Q5_0:
+		case eDataType::Q8_0:
+		case eDataType::Q4_0:
+		case eDataType::Q4_1:
+		case eDataType::Q5_1:
+			return true;
+		default:
+			return false;
+		}
 	}
 
 	DXGI_FORMAT viewFormat( eDataType dt );

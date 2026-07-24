@@ -21,6 +21,14 @@ namespace Whisper
 		q5_0 = 6,
 		q5_1 = 7,
 		q8_0 = 8,
+		// K-quants: 256-element super-blocks with sub-block scales. Loaded by
+		// dequantizing to fp16 on the CPU (no native GPU shader).
+		q2_K = 10,
+		q3_K = 11,
+		q4_K = 12,
+		q5_K = 13,
+		q6_K = 14,
+		q8_K = 15,	// intermediate type, not normally stored as a weight
 	};
 
 	// Elements per quantization block (QK). 1 for the non-blocked f16/f32.
@@ -53,12 +61,16 @@ namespace Whisper
 	// with plain typed loads and dequantize inline. Layout per type:
 	//   q8_0:  [ scales : fp16 x nBlocks ][ qs : int8  x nElements ]
 	//   q5_0:  [ scales : fp16 x nBlocks ][ qh : u32 x nBlocks ][ nibbles : u8 x 16*nBlocks ]
+	//   q4_0:  [ scales : fp16 x nBlocks ][ nibbles : u8 x 16*nBlocks ]
+	//   q4_1:  [ scales : fp16 x nBlocks ][ mins : fp16 x nBlocks ][ nibbles : u8 x 16*nBlocks ]
+	//   q5_1:  [ scales : fp16 x nBlocks ][ mins : fp16 x nBlocks ][ qh : u32 x nBlocks ][ nibbles : u8 x 16*nBlocks ]
 	// Section offsets below are expressed in 32-bit words (the shader reads Buffer<uint>).
 	struct QuantGpuLayout
 	{
 		uint32_t nBlocks = 0;
 		uint32_t scalesWord = 0;   // word offset of the fp16 scales section (always 0)
-		uint32_t highWord = 0;     // word offset of the qh section (q5_* only; else == quantsWord)
+		uint32_t minsWord = 0;     // word offset of the fp16 mins section (q4_1 / q5_1; else 0)
+		uint32_t highWord = 0;     // word offset of the qh section (q5_* only; else 0)
 		uint32_t quantsWord = 0;   // word offset of the qs / nibbles section
 		uint32_t totalBytes = 0;   // total buffer size, multiple of 4
 	};

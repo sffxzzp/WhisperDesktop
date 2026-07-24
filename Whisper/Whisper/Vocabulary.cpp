@@ -105,6 +105,12 @@ HRESULT Vocabulary::load( ComLight::iReadStream* stm, int lengthInHeader )
 		tokens[ i ] = reinterpret_cast<const char*>( offset );
 	}
 
+	finalizeSpecialTokens( countWords, lengthInHeader );
+	return S_OK;
+}
+
+void Vocabulary::finalizeSpecialTokens( int countWords, int lengthInHeader )
+{
 	n_vocab = lengthInHeader;
 
 	if( is_multilingual() )
@@ -145,6 +151,36 @@ HRESULT Vocabulary::load( ComLight::iReadStream* stm, int lengthInHeader )
 	}
 
 	completeBuild();
+}
+
+HRESULT Vocabulary::loadFromTokens( const std::vector<std::string>& toks, int lengthInHeader )
+{
+	if( lengthInHeader <= 0 )
+		return E_INVALIDARG;
+
+	tokens.clear();
+	stringData.clear();
+
+	const int countWords = (int)toks.size();
+	if( countWords <= 0 )
+		return E_INVALIDARG;
+
+	const size_t actualCount = std::max( (size_t)countWords, (size_t)lengthInHeader );
+	tokens.resize( actualCount );
+
+	for( int i = 0; i < countWords; i++ )
+	{
+		const std::string& s = toks[ i ];
+		const size_t len = s.size();
+		const size_t offset = stringData.size();
+		stringData.resize( offset + len + 1 );
+		if( len != 0 )
+			memcpy( &stringData[ offset ], s.data(), len );
+		stringData[ offset + len ] = '\0';
+		tokens[ i ] = reinterpret_cast<const char*>( offset );
+	}
+
+	finalizeSpecialTokens( countWords, lengthInHeader );
 	return S_OK;
 }
 

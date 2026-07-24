@@ -56,5 +56,8 @@ namespace Whisper
 
 		HRESULT loadGpu( ComLight::iReadStream* stm, CallbacksImpl& callbacks );
 		HRESULT loadHybrid( ComLight::iReadStream* stm, CallbacksImpl& callbacks );
+		// GGUF-container path (both hparams+vocab+mel and the GPU tensors). The 4-byte
+		// magic has already been consumed and matched "GGUF" by load().
+		HRESULT loadGguf( ComLight::iReadStream* stm, CallbacksImpl& callbacks );
 	};
 }
