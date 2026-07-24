@@ -4,7 +4,9 @@ This fork extends the original project with:
 
 * **`large-v3` and `large-v3-turbo` models** — support for 128 mel bands, the updated tokenizer/vocabulary (`n_vocab` 51866) and the added Cantonese language. Older 80-mel models keep working unchanged.
 
-* **Native GPU inference of quantized models** — `q5_0` and `q8_0` weights (e.g. `ggml-large-v3-turbo-q5_0.bin` / `-q8_0.bin` from the [whisper.cpp model repo](https://huggingface.co/ggerganov/whisper.cpp)) are kept quantized in VRAM and dequantized on the fly inside the matrix-multiply compute shaders. The weights therefore take roughly **1/3 (q5_0)** or **~55% (q8_0)** of the F16 VRAM, with transcription quality on par with the F16 model.
+* **Native GPU inference of quantized models** — every legacy block-quant format (`q4_0`, `q4_1`, `q5_0`, `q5_1`, `q8_0`) is kept quantized in VRAM and dequantized on the fly inside the matrix-multiply compute shaders, so the weights take roughly **1/3 (q5_0)** … **~55% (q8_0)** of the F16 VRAM, with transcription quality on par with the F16 model.
+
+* **GGUF format** — GGUF-packaged whisper models load too, alongside the classic `.bin` format (dispatched by file magic). Whisper hyper-parameters are inferred from the tensor shapes, the vocabulary is read from `tokenizer.ggml.tokens`, and the mel filter bank is reconstructed. The larger K-quant formats (`q2_K`–`q6_K`) load as well; they are dequantized to F16 at load time (no VRAM savings, since there is no native GPU shader for them yet).
 
 Measured VRAM — weights at load / peak during transcription:
 
@@ -15,7 +17,7 @@ Measured VRAM — weights at load / peak during transcription:
 | `large-v3-turbo-q8_0` | 0.9 GB | 1.4 GB |
 | `large-v3-turbo-q5_0` | 0.7 GB | 1.2 GB |
 
-The `q4_0` / `q4_1` / `q5_1` formats also load, but are currently dequantized to F16 at load time (no VRAM savings). The panel-reshaped matmul path (an AMD-specific optimization) is bypassed for quantized weights, which use the plain matmul path on every GPU.
+The panel-reshaped matmul path (an AMD-specific optimization) is bypassed for quantized weights, which use the plain matmul path on every GPU.
 
 Build is unchanged from the original instructions below — remember to run the `CompressShaders` tool before building `Whisper` (it now packs the added quantized shaders).
 
