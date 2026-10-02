@@ -60,7 +60,7 @@ LRESULT CaptureDlg::OnInitDialog( UINT nMessage, WPARAM wParam, LPARAM lParam, B
 	HRESULT hr = work.create( this );
 	if( FAILED( hr ) )
 	{
-		reportError( m_hWnd, L"CreateThreadpoolWork failed", nullptr, hr );
+		reportError( m_hWnd, L"Falha ao criar tarefa de processamento", nullptr, hr );
 		EndDialog( IDCANCEL );
 	}
 
@@ -123,14 +123,14 @@ void CaptureDlg::onDeviceRefresh()
 	const size_t len = devices.size();
 	if( len == 0 )
 	{
-		MessageBox( L"在此计算机上未找到捕获设备。\n如果您有USB麦克风，请将其连接到此PC，\n然后按“刷新”按钮。",
-			L"捕获设备", MB_OK | MB_ICONWARNING );
+		MessageBox( L"Nenhum dispositivo de captura foi encontrado.\nConecte um microfone USB a este computador\ne clique em Atualizar.",
+			L"Dispositivos de captura", MB_OK | MB_ICONWARNING );
 	}
 	else
 	{
 		const char* suffix = ( len != 1 ) ? "s" : "";
-		str.Format( L"检测到 %zu 个音频捕获设备。", len, suffix );
-		MessageBox( str, L"录音设备", MB_OK | MB_ICONINFORMATION );
+		str.Format( L"%zu dispositivo(s) de captura de áudio encontrado(s).", len, suffix );
+		MessageBox( str, L"Dispositivos de gravação", MB_OK | MB_ICONINFORMATION );
 	}
 }
 
@@ -163,8 +163,8 @@ void CaptureDlg::onSaveTextCheckbox()
 
 void CaptureDlg::onBrowseResult()
 {
-	LPCTSTR title = L"选择输出的文本文件";
-	LPCTSTR outputFilters = L"文本文档 (*.txt)\0*.txt\0\0";
+	LPCTSTR title = L"Selecionar arquivo de texto de saída";
+	LPCTSTR outputFilters = L"Arquivo de texto (*.txt)\0*.txt\0\0";
 	CString path;
 	transcribeOutputPath.GetWindowText( path );
 	if( !getSaveFileName( m_hWnd, title, outputFilters, path ) )
@@ -199,12 +199,12 @@ void CaptureDlg::setPending( bool nowPending )
 	if( nowPending )
 	{
 		progressBar.SetMarquee( TRUE, 0 );
-		btnRunCapture.SetWindowText( L"停止" );
+		btnRunCapture.SetWindowText( L"Parar" );
 	}
 	else
 	{
 		progressBar.SetMarquee( FALSE, 0 );
-		btnRunCapture.SetWindowText( L"捕获" );
+		btnRunCapture.SetWindowText( L"Capturar" );
 		btnRunCapture.EnableWindow( TRUE );
 		captureRunning = false;
 	}
@@ -222,7 +222,7 @@ void CaptureDlg::onRunCapture()
 	int dev = cbCaptureDevice.GetCurSel();
 	if( dev < 0 || dev >= (int)devices.size() )
 	{
-		showError( L"请选择一个录音设备", S_FALSE );
+		showError( L"Selecione um dispositivo de gravação", S_FALSE );
 		return;
 	}
 	threadState.endpoint = devices[ dev ].endpoint;
@@ -237,7 +237,7 @@ void CaptureDlg::onRunCapture()
 		transcribeOutputPath.GetWindowText( threadState.textOutputPath );
 		if( threadState.textOutputPath.GetLength() <= 0 )
 		{
-			showError( L"请选择输出的文本文件", S_FALSE );
+			showError( L"Selecione o arquivo de texto de saída", S_FALSE );
 			return;
 		}
 		appState.stringStore( regValOutPath, threadState.textOutputPath );
@@ -312,7 +312,7 @@ static HRESULT printDateTime( CAtlFile& file )
 	GetLocalTime( &time );
 
 	CString str;
-	str = L"==== 录音时间： ";
+	str = L"==== Tempo de gravação: ";
 	CHECK( appendDate( str, time ) );
 	str += L", ";
 	CHECK( appendTime( str, time ) );
@@ -340,7 +340,7 @@ inline HRESULT CaptureDlg::runCapture()
 		hr = file.Create( threadState.textOutputPath, GENERIC_WRITE, FILE_SHARE_READ, creation );
 		if( FAILED( hr ) )
 		{
-			threadState.errorMessage = L"无法创建输出文本文件";
+			threadState.errorMessage = L"Não foi possível criar o arquivo de texto de saída";
 			return hr;
 		}
 		if( append )
@@ -396,7 +396,7 @@ void __stdcall CaptureDlg::poolCallback() noexcept
 
 void CaptureDlg::showError( LPCTSTR text, HRESULT hr )
 {
-	reportError( m_hWnd, text, L"录音失败", hr );
+	reportError( m_hWnd, text, L"Falha na gravação", hr );
 }
 
 LRESULT CaptureDlg::onThreadQuit( UINT nMessage, WPARAM wParam, LPARAM lParam, BOOL& bHandled )
@@ -406,7 +406,7 @@ LRESULT CaptureDlg::onThreadQuit( UINT nMessage, WPARAM wParam, LPARAM lParam, B
 	const HRESULT hr = (HRESULT)wParam;
 	if( FAILED( hr ) )
 	{
-		LPCTSTR failMessage = L"录音失败";
+		LPCTSTR failMessage = L"Falha na gravação";
 
 		if( threadState.errorMessage.GetLength() > 0 )
 		{

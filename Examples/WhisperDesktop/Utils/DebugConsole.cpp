@@ -1,4 +1,4 @@
-// https://github.com/Const-me/vis_avs_dx/blob/master/avs_dx/DxVisuals/Interop/ConsoleLogger.cpp
+﻿// https://github.com/Const-me/vis_avs_dx/blob/master/avs_dx/DxVisuals/Interop/ConsoleLogger.cpp
 #include "stdafx.h"
 #include "DebugConsole.h"
 #include "miscUtils.h"
@@ -187,7 +187,7 @@ HRESULT DebugConsole::show()
 			return getLastHr();
 	}
 
-	SetConsoleTitle( L"Whisper Desktop Debug Console" );
+	SetConsoleTitle( L"Whisper Desktop — Console de depuração" );
 
 	SetConsoleCtrlHandler( &consoleHandlerRoutine, TRUE );
 

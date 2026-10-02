@@ -38,9 +38,9 @@ LRESULT LoadModelDlg::OnInitDialog( UINT nMessage, WPARAM wParam, LPARAM lParam,
 	HRESULT hr = work.create( this );
 	if( FAILED( hr ) )
 	{
-		CString text = L"CreateThreadpoolWork failed\n";
+		CString text = L"Falha ao criar tarefa de processamento\n";
 		text += formatErrorMessage( hr );
-		::MessageBox( m_hWnd, text, L"无法加载模型", MB_OK | MB_ICONWARNING );
+		::MessageBox( m_hWnd, text, L"Não foi possível carregar o modelo", MB_OK | MB_ICONWARNING );
 		return TRUE;
 	}
 
@@ -70,7 +70,7 @@ LRESULT LoadModelDlg::OnBrowse( UINT, INT, HWND, BOOL& bHandled )
 
 	CString path;
 	modelPath.GetWindowText( path );
-	if( !getOpenFileName( m_hWnd, L"选择一个 GGML 模型文件", L"二进制文件 (*.bin)\0*.bin\0\0", path ) )
+	if( !getOpenFileName( m_hWnd, L"Selecionar modelo GGML", L"Arquivo binário (*.bin)\0*.bin\0\0", path ) )
 		return 0;
 
 	modelPath.SetWindowText( path );
@@ -80,13 +80,13 @@ LRESULT LoadModelDlg::OnBrowse( UINT, INT, HWND, BOOL& bHandled )
 
 LRESULT LoadModelDlg::validationError( LPCTSTR message )
 {
-	reportError( m_hWnd, message, L"无法加载模型" );
+	reportError( m_hWnd, message, L"Não foi possível carregar o modelo" );
 	return 0;
 }
 
 LRESULT LoadModelDlg::validationError( LPCTSTR message, HRESULT hr )
 {
-	reportError( m_hWnd, message, L"无法加载模型", hr );
+	reportError( m_hWnd, message, L"Não foi possível carregar o modelo", hr );
 	return 0;
 }
 
@@ -110,13 +110,13 @@ LRESULT LoadModelDlg::OnOk( UINT, INT, HWND, BOOL& bHandled )
 {
 	modelPath.GetWindowText( path );
 	if( path.GetLength() <= 0 )
-		return validationError( L"请选择一个 GGML 模型文件" );
+		return validationError( L"Selecione um arquivo de modelo GGML" );
 
 	{
 		CAtlFile file;
 		HRESULT hr = file.Create( path, GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING );
 		if( FAILED( hr ) )
-			return validationError( L"无法打开模型文件", hr );
+			return validationError( L"Não foi possível abrir o arquivo do modelo", hr );
 
 		ULONGLONG cb = 0;
 		file.GetSize( cb );
@@ -125,7 +125,7 @@ LRESULT LoadModelDlg::OnOk( UINT, INT, HWND, BOOL& bHandled )
 
 	impl = implGetValue( cbModelType );
 	if( impl == (Whisper::eModelImplementation)0 )
-		return validationError( L"请选择一个模型类型" );
+		return validationError( L"Selecione um tipo de modelo" );
 
 	setPending( true );
 	work.post();
@@ -196,7 +196,7 @@ LRESULT LoadModelDlg::OnCallbackStatus( UINT, WPARAM wParam, LPARAM, BOOL& bHand
 	const HRESULT hr = (HRESULT)wParam;
 	if( FAILED( hr ) )
 	{
-		LPCTSTR failMessage = L"加载模型时出错";
+		LPCTSTR failMessage = L"Erro ao carregar o modelo";
 		if( loadError.GetLength() > 0 )
 		{
 			CString tmp = failMessage;

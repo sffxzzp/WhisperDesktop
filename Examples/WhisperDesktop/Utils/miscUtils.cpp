@@ -29,7 +29,7 @@ CString formatErrorMessage( HRESULT hr )
 		message.TrimRight();
 	}
 	else
-		message.Format( L"Error code %i (0x%08X)", hr, hr );
+		message.Format( L"Código de erro %i (0x%08X)", hr, hr );
 
 	return message;
 }
@@ -37,9 +37,9 @@ CString formatErrorMessage( HRESULT hr )
 void reportFatalError( const char* what, HRESULT hr )
 {
 	CString message;
-	message.Format( L"%S\n%S\n", "Unable to start the application.", what );
+	message.Format( L"%S\n%S\n", "Não foi possível iniciar o aplicativo.", what );
 	message += formatErrorMessage( hr );
-	::MessageBox( nullptr, message, L"Whisper Desktop Startup", MB_OK | MB_ICONERROR );
+	::MessageBox( nullptr, message, L"Inicialização do Whisper Desktop", MB_OK | MB_ICONERROR );
 }
 
 namespace
@@ -221,7 +221,7 @@ bool getSaveFileName( HWND owner, LPCTSTR title, LPCTSTR filter, CString& path, 
 void reportError( HWND owner, LPCTSTR text, LPCTSTR title, HRESULT hr )
 {
 	if( nullptr == title )
-		title = L"Operation Failed";
+		title = L"Falha na operação";
 
 	CString message = text;
 	message.TrimRight();
@@ -248,7 +248,7 @@ bool isInvalidTranslate( HWND owner, uint32_t lang, bool translate )
 	if( lang != english )
 		return false;
 
-	LPCTSTR message = L"The translate feature translates speech to English.\nIt’s not available when the audio language is already English.";
-	MessageBox( owner, message, L"Incompatible parameters", MB_OK | MB_ICONINFORMATION );
+	LPCTSTR message = L"O recurso Traduzir converte a fala para inglês.\nEle não está disponível quando o áudio já está em inglês.";
+	MessageBox( owner, message, L"Parâmetros incompatíveis", MB_OK | MB_ICONINFORMATION );
 	return true;
 }
